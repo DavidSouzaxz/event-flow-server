@@ -61,9 +61,11 @@ app.post("/login", async (req, res) => {
   }
 });
 
-app.listen(3000, () =>
-  console.log("🚀 Server rodando em http://localhost:3000")
-);
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server rodando na porta ${PORT}`);
+});
 
 app.get("/events", async (req, res) => {
   const events = await prisma.event.findMany({
