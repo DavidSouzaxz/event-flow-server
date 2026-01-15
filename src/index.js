@@ -9,6 +9,7 @@ const bcrypt = require("bcryptjs");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const authMiddleware = require("./middlewares/auth");
+const isAdminMiddleware = require("./middlewares/isAdmin");
 
 const prisma = new PrismaClient();
 
@@ -29,7 +30,12 @@ app.post("/register", async (req, res) => {
       data: { name, email, password: hashedPassword },
     });
 
-    res.status(201).json({ id: user.id, name: user.name, email: user.email });
+    res.status(201).json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    });
   } catch (error) {
     res.status(500).json({ error: "Erro ao criar usuário" });
   }
@@ -47,7 +53,7 @@ app.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Credenciais inválidas" });
 
     const token = jwt.sign(
-      { userId: user.id, email: user.email },
+      { userId: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
@@ -74,7 +80,7 @@ app.get("/events", async (req, res) => {
   res.json(events);
 });
 
-app.post("/events", authMiddleware, async (req, res) => {
+app.post("/events", authMiddleware, isAdminMiddleware, async (req, res) => {
   const { title, description, date, location, price, imageUrl } = req.body;
 
   try {
@@ -86,11 +92,12 @@ app.post("/events", authMiddleware, async (req, res) => {
         location,
         price: parseFloat(price),
         imageUrl,
-        ownerId: req.userId,
+        ownerId: req.user.id,
       },
     });
     res.status(201).json(event);
   } catch (error) {
+    console.error("Erro ao criar evento:", error); // Log do erro
     res.status(400).json({ error: "Erro ao criar evento" });
   }
 });
@@ -164,7 +171,7 @@ app.delete("/events/:id", authMiddleware, async (req, res) => {
   }
 });
 
-app.put("/events/:id", authMiddleware, async (req, res) => {
+app.put("/events/:id", authMiddleware, isAdminMiddleware, async (req, res) => {
   const { id } = req.params;
   const { title, description, date, location, price, imageUrl } = req.body;
 

@@ -1,19 +1,20 @@
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
 
 generator client {
-  provider = "prisma-client-js" 
+  provider = "prisma-client-js"
 }
 
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String
-  password  String
-  events    Event[]  // Eventos que ele criou (organizador)
-  tickets   Ticket[] // Ingressos que ele comprou
+  id       String   @id @default(uuid())
+  email    String   @unique
+  name     String
+  password String
+  role     role     @default(USER) // Adicionado o campo role com valor padrão USER
+  events   Event[]
+  tickets  Ticket[] @relation("UserTickets") // Adicionado o campo para a relação inversa com Ticket
 }
 
 model Event {
@@ -34,6 +35,11 @@ model Ticket {
   eventId   String
   userId    String
   event     Event    @relation(fields: [eventId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], name: "UserTickets") // Adicionado o nome da relação
   createdAt DateTime @default(now())
+}
+
+enum role {
+  USER
+  ADMIN
 }
