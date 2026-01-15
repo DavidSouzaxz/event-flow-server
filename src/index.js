@@ -12,19 +12,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Endpoint de Cadastro
 app.post("/register", async (req, res) => {
   const { name, email, password } = req.body;
 
   try {
-    // 1. Verificar se o usuário já existe
     const userExists = await prisma.user.findUnique({ where: { email } });
     if (userExists) return res.status(400).json({ error: "Usuário já existe" });
 
-    // 2. Hash da senha
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 3. Criar no banco
     const user = await prisma.user.create({
       data: { name, email, password: hashedPassword },
     });
@@ -39,20 +35,17 @@ app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    // 1. Busca o usuário
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(401).json({ error: "Credenciais inválidas" });
 
-    // 2. Verifica a senha
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid)
       return res.status(401).json({ error: "Credenciais inválidas" });
 
-    // 3. Gera o Token JWT
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" } // Expira em 1 dia
+      { expiresIn: "1d" }
     );
 
     res.json({
@@ -70,7 +63,7 @@ app.listen(3000, () =>
 
 app.get("/events", async (req, res) => {
   const events = await prisma.event.findMany({
-    include: { owner: { select: { name: true } } }, // Traz o nome do organizador
+    include: { owner: { select: { name: true } } },
   });
   res.json(events);
 });
@@ -87,7 +80,7 @@ app.post("/events", authMiddleware, async (req, res) => {
         location,
         price: parseFloat(price),
         imageUrl,
-        ownerId: req.userId, // Pego do token pelo middleware!
+        ownerId: req.userId,
       },
     });
     res.status(201).json(event);
@@ -112,7 +105,7 @@ app.post("/bookings", authMiddleware, async (req, res) => {
     const ticket = await prisma.ticket.create({
       data: {
         eventId,
-        userId: req.userId, // Identificado pelo middleware de auth
+        userId: req.userId,
       },
     });
     res.status(201).json(ticket);
@@ -126,7 +119,7 @@ app.get("/my-tickets", authMiddleware, async (req, res) => {
     const tickets = await prisma.ticket.findMany({
       where: { userId: req.userId },
       include: {
-        event: true, // Traz os detalhes do evento junto com o ingresso
+        event: true,
       },
       orderBy: { createdAt: "desc" },
     });
@@ -142,7 +135,7 @@ app.get("/my-events", authMiddleware, async (req, res) => {
       where: { ownerId: req.userId },
       include: {
         _count: {
-          select: { tickets: true }, // Conta quantos ingressos foram gerados
+          select: { tickets: true },
         },
       },
       orderBy: { date: "asc" },
@@ -153,13 +146,10 @@ app.get("/my-events", authMiddleware, async (req, res) => {
   }
 });
 
-// Endpoint para excluir um evento
 app.delete("/events/:id", authMiddleware, async (req, res) => {
   const { id } = req.params;
   try {
-    // Primeiro deletamos os tickets vinculados (integridade referencial)
     await prisma.ticket.deleteMany({ where: { eventId: id } });
-    // Depois o evento
     await prisma.event.delete({ where: { id, ownerId: req.userId } });
 
     res.json({ message: "Evento excluído com sucesso" });
@@ -174,7 +164,7 @@ app.put("/events/:id", authMiddleware, async (req, res) => {
 
   try {
     const event = await prisma.event.update({
-      where: { id, ownerId: req.userId }, // Garante que só o dono edita
+      where: { id, ownerId: req.userId },
       data: {
         title,
         description,

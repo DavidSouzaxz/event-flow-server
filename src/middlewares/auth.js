@@ -6,7 +6,6 @@ module.exports = (req, res, next) => {
   if (!authHeader)
     return res.status(401).json({ error: "Token não fornecido" });
 
-  // O formato do header é "Bearer TOKEN_AQUI"
   const parts = authHeader.split(" ");
   if (parts.length !== 2)
     return res.status(401).json({ error: "Erro no token" });
@@ -16,7 +15,6 @@ module.exports = (req, res, next) => {
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) return res.status(401).json({ error: "Token inválido" });
 
-    // Salva o ID do usuário dentro da requisição para usar depois
     req.userId = decoded.userId;
     return next();
   });
