@@ -1,5 +1,7 @@
-if (process.env.NODE_ENV !== "production") {
+try {
   require("dotenv").config();
+} catch (e) {
+  // Ignora se o dotenv não estiver disponível em produção
 }
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
