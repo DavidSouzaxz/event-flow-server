@@ -118,7 +118,7 @@ app.post("/bookings", authMiddleware, async (req, res) => {
     const ticket = await prisma.ticket.create({
       data: {
         eventId,
-        userId: req.userId,
+        userId: req.user.id,
       },
     });
     res.status(201).json(ticket);
@@ -130,7 +130,7 @@ app.post("/bookings", authMiddleware, async (req, res) => {
 app.get("/my-tickets", authMiddleware, async (req, res) => {
   try {
     const tickets = await prisma.ticket.findMany({
-      where: { userId: req.userId },
+      where: { userId: req.user.id },
       include: {
         event: true,
       },
@@ -145,7 +145,7 @@ app.get("/my-tickets", authMiddleware, async (req, res) => {
 app.get("/my-events", authMiddleware, async (req, res) => {
   try {
     const events = await prisma.event.findMany({
-      where: { ownerId: req.userId },
+      where: { ownerId: req.user.id },
       include: {
         _count: {
           select: { tickets: true },
@@ -163,7 +163,7 @@ app.delete("/events/:id", authMiddleware, async (req, res) => {
   const { id } = req.params;
   try {
     await prisma.ticket.deleteMany({ where: { eventId: id } });
-    await prisma.event.delete({ where: { id, ownerId: req.userId } });
+    await prisma.event.delete({ where: { id, ownerId: req.user.id } });
 
     res.json({ message: "Evento excluído com sucesso" });
   } catch (error) {
@@ -177,7 +177,7 @@ app.put("/events/:id", authMiddleware, isAdminMiddleware, async (req, res) => {
 
   try {
     const event = await prisma.event.update({
-      where: { id, ownerId: req.userId },
+      where: { id, ownerId: req.user.id },
       data: {
         title,
         description,
