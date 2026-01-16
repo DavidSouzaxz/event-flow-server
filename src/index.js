@@ -192,3 +192,29 @@ app.put("/events/:id", authMiddleware, isAdminMiddleware, async (req, res) => {
     res.status(400).json({ error: "Erro ao atualizar evento" });
   }
 });
+
+app.get("/user/me", async (req, res) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ error: "Token não fornecido" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, name: true, email: true, role: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "Usuário não encontrado" });
+    }
+
+    res.json(user);
+  } catch (error) {
+    res.status(401).json({ error: "Token inválido ou expirado" });
+  }
+});
