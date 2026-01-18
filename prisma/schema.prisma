@@ -24,6 +24,7 @@ model Event {
   date        DateTime
   location    String
   price       Float
+  capacity    Int      @default(50) 
   imageUrl    String
   ownerId     String
   owner       User     @relation(fields: [ownerId], references: [id])
@@ -34,8 +35,9 @@ model Ticket {
   id        String   @id @default(uuid())
   eventId   String
   userId    String
+  quantity  Int      @default(1) 
   event     Event    @relation(fields: [eventId], references: [id])
-  user      User     @relation(fields: [userId], references: [id], name: "UserTickets") // Adicionado o nome da relação
+  user      User     @relation(fields: [userId], references: [id], name: "UserTickets")
   createdAt DateTime @default(now())
 }
 
