@@ -55,7 +55,7 @@ app.post("/login", async (req, res) => {
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "1d" },
     );
 
     res.json({
@@ -81,7 +81,8 @@ app.get("/events", async (req, res) => {
 });
 
 app.post("/events", authMiddleware, isAdminMiddleware, async (req, res) => {
-  const { title, description, date, location, price, imageUrl } = req.body;
+  const { title, description, date, location, price, imageUrl, capacity } =
+    req.body;
 
   try {
     const event = await prisma.event.create({
@@ -89,6 +90,7 @@ app.post("/events", authMiddleware, isAdminMiddleware, async (req, res) => {
         title,
         description,
         date: new Date(date),
+        capacity: Number(capacity),
         location,
         price: parseFloat(price),
         imageUrl,
@@ -112,16 +114,42 @@ app.get("/events/:id", async (req, res) => {
 });
 
 app.post("/bookings", authMiddleware, async (req, res) => {
-  const { eventId } = req.body;
+  const { eventId, quantity } = req.body;
 
   try {
-    const ticket = await prisma.ticket.create({
-      data: {
-        eventId,
-        userId: req.user.id,
-      },
+    // Busca o evento para verificar a capacidade
+    const event = await prisma.event.findUnique({ where: { id: eventId } });
+    if (!event) {
+      return res.status(404).json({ error: "Evento não encontrado" });
+    }
+
+    const qty = Number(quantity);
+    if (event.capacity < qty) {
+      return res.status(400).json({
+        error: "Quantidade de ingressos excede a capacidade do evento",
+      });
+    }
+
+    // Cria um ticket para cada ingresso reservado
+    const tickets = [];
+    for (let i = 0; i < qty; i++) {
+      const ticket = await prisma.ticket.create({
+        data: {
+          eventId,
+          userId: req.user.id,
+          quantity: 1,
+        },
+      });
+      tickets.push(ticket);
+    }
+
+    // Atualiza a capacidade do evento
+    await prisma.event.update({
+      where: { id: eventId },
+      data: { capacity: event.capacity - qty },
     });
-    res.status(201).json(ticket);
+
+    res.status(201).json({ tickets });
   } catch (error) {
     res.status(400).json({ error: "Erro ao gerar ingresso" });
   }
@@ -173,7 +201,8 @@ app.delete("/events/:id", authMiddleware, async (req, res) => {
 
 app.put("/events/:id", authMiddleware, isAdminMiddleware, async (req, res) => {
   const { id } = req.params;
-  const { title, description, date, location, price, imageUrl } = req.body;
+  const { title, description, date, location, price, imageUrl, capacity } =
+    req.body;
 
   try {
     const event = await prisma.event.update({
@@ -182,6 +211,7 @@ app.put("/events/:id", authMiddleware, isAdminMiddleware, async (req, res) => {
         title,
         description,
         date: new Date(date),
+        capacity: Number(capacity),
         location,
         price: parseFloat(price),
         imageUrl,
