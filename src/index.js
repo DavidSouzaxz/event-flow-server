@@ -325,3 +325,18 @@ app.delete("/coupons/:code", authMiddleware, async (req, res) => {
     res.status(400).json({ error: "Não foi possível excluir o cupom" });
   }
 });
+
+app.get("/me", authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, name: true, email: true, role: true }, // Não envie a senha!
+    });
+
+    if (!user) return res.status(401).json({ error: "Usuário não existe" });
+
+    res.json(user);
+  } catch (error) {
+    res.status(401).json({ error: "Token inválido" });
+  }
+});
