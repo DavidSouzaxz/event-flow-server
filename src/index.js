@@ -123,6 +123,13 @@ app.post("/bookings", authMiddleware, async (req, res) => {
       return res.status(404).json({ error: "Evento não encontrado" });
     }
 
+    if (couponCode) {
+      await prisma.coupon.update({
+        where: { code: couponCode },
+        data: { usedCount: { increment: 1 } },
+      });
+    }
+
     const qty = Number(quantity);
     if (event.capacity < qty) {
       return res.status(400).json({
@@ -246,5 +253,75 @@ app.get("/user/me", async (req, res) => {
     res.json(user);
   } catch (error) {
     res.status(401).json({ error: "Token inválido ou expirado" });
+  }
+});
+
+app.post("/coupons", authMiddleware, async (req, res) => {
+  if (req.user.role !== "ADMIN")
+    return res.status(403).json({ error: "Acesso negado" });
+
+  const { code, discountPercent, expirationDate, maxUses } = req.body;
+
+  try {
+    const coupon = await prisma.coupon.create({
+      data: {
+        code: code.toUpperCase(),
+        discountPercent: parseInt(discountPercent),
+        expirationDate: new Date(expirationDate),
+        maxUses: parseInt(maxUses) || 100,
+      },
+    });
+    res.json(coupon);
+  } catch (error) {
+    res
+      .status(400)
+      .json({ error: "Erro ao criar cupom. O código já pode existir." });
+  }
+});
+
+app.get("/coupons", authMiddleware, async (req, res) => {
+  const coupons = await prisma.coupon.findMany({
+    orderBy: { createdAt: "desc" },
+  });
+  res.json(coupons);
+});
+
+app.post("/coupons/validate", async (req, res) => {
+  const { code } = req.body;
+
+  const coupon = await prisma.coupon.findUnique({
+    where: { code: code.toUpperCase() },
+  });
+
+  if (!coupon || !coupon.active) {
+    return res.status(404).json({ error: "Cupom inválido ou inativo." });
+  }
+
+  const now = new Date();
+  if (now > coupon.expirationDate) {
+    return res.status(400).json({ error: "Este cupom já expirou." });
+  }
+
+  if (coupon.usedCount >= coupon.maxUses) {
+    return res
+      .status(400)
+      .json({ error: "Este cupom atingiu o limite de usos." });
+  }
+
+  res.json({
+    discountPercent: coupon.discountPercent,
+    message: "Cupom aplicado com sucesso!",
+  });
+});
+
+app.delete("/coupons/:code", authMiddleware, async (req, res) => {
+  if (req.user.role !== "ADMIN")
+    return res.status(403).json({ error: "Acesso negado" });
+  const { code } = req.params;
+  try {
+    await prisma.coupon.delete({ where: { code: code.toUpperCase() } });
+    res.json({ message: "Cupom excluído com sucesso" });
+  } catch (error) {
+    res.status(400).json({ error: "Não foi possível excluir o cupom" });
   }
 });
