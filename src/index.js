@@ -24,6 +24,10 @@ app.post("/register", async (req, res) => {
     const userExists = await prisma.user.findUnique({ where: { email } });
     if (userExists) return res.status(400).json({ error: "Usuário já existe" });
 
+    if (name.length <= 0 || email.length <= 0 || password.length < 6) {
+      return res.status(400).json({ error: "Dados inválidos" });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
