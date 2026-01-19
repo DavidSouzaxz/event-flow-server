@@ -186,6 +186,9 @@ app.get("/my-events", authMiddleware, async (req, res) => {
     const events = await prisma.event.findMany({
       where: { ownerId: req.user.id },
       include: {
+        tickets: {
+          select: { createdAt: true },
+        },
         _count: {
           select: { tickets: true },
         },
@@ -352,7 +355,7 @@ app.put("/profile", authMiddleware, async (req, res) => {
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: { name },
-      select: { id: true, name: true, email: true, role: true }
+      select: { id: true, name: true, email: true, role: true },
     });
 
     res.json(updatedUser);
