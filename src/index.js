@@ -344,3 +344,19 @@ app.get("/me", authMiddleware, async (req, res) => {
     res.status(401).json({ error: "Token inválido" });
   }
 });
+
+app.put("/profile", authMiddleware, async (req, res) => {
+  const { name } = req.body;
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { name },
+      select: { id: true, name: true, email: true, role: true }
+    });
+
+    res.json(updatedUser);
+  } catch (error) {
+    res.status(500).json({ error: "Erro ao atualizar perfil." });
+  }
+});
