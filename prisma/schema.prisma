@@ -41,6 +41,17 @@ model Ticket {
   createdAt DateTime @default(now())
 }
 
+model Coupon {
+  id              String   @id @default(uuid())
+  code            String   @unique // Ex: "PROMO10"
+  discountPercent Int      // Porcentagem de desconto (ex: 10)
+  maxUses         Int      @default(100)
+  usedCount       Int      @default(0)
+  expirationDate  DateTime
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+}
+
 enum role {
   USER
   ADMIN
