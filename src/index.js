@@ -24,6 +24,10 @@ app.post("/register", async (req, res) => {
     const userExists = await prisma.user.findUnique({ where: { email } });
     if (userExists) return res.status(400).json({ error: "Usuário já existe" });
 
+    if (name.length <= 0 || email.length <= 0 || password.length < 6) {
+      return res.status(400).json({ error: "Dados inválidos" });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
@@ -114,7 +118,7 @@ app.get("/events/:id", async (req, res) => {
 });
 
 app.post("/bookings", authMiddleware, async (req, res) => {
-  const { eventId, quantity } = req.body;
+  const { eventId, quantity, couponCode } = req.body;
 
   try {
     // Busca o evento para verificar a capacidade
@@ -323,5 +327,20 @@ app.delete("/coupons/:code", authMiddleware, async (req, res) => {
     res.json({ message: "Cupom excluído com sucesso" });
   } catch (error) {
     res.status(400).json({ error: "Não foi possível excluir o cupom" });
+  }
+});
+
+app.get("/me", authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, name: true, email: true, role: true }, // Não envie a senha!
+    });
+
+    if (!user) return res.status(401).json({ error: "Usuário não existe" });
+
+    res.json(user);
+  } catch (error) {
+    res.status(401).json({ error: "Token inválido" });
   }
 });
