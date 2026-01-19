@@ -114,7 +114,7 @@ app.get("/events/:id", async (req, res) => {
 });
 
 app.post("/bookings", authMiddleware, async (req, res) => {
-  const { eventId, quantity } = req.body;
+  const { eventId, quantity, couponCode } = req.body;
 
   try {
     // Busca o evento para verificar a capacidade
