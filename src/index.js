@@ -14,14 +14,54 @@ const {
   sendBookingEmail,
   sendVerificationEmail,
 } = require("./services/mailService");
+const cron = require("node-cron");
 
 const baseUrl = process.env.BASE_URL || "http://localhost:3000";
-
 const prisma = new PrismaClient();
-
 const app = express();
+
 app.use(cors());
 app.use(express.json());
+
+cron.schedule("*/5 * * * *", async () => {
+  const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+
+  try {
+    // 1. Buscar quais tickets serão cancelados para saber de quais eventos eles são
+    const ticketsToCancel = await prisma.ticket.findMany({
+      where: {
+        status: 1,
+        createdAt: { lt: thirtyMinutesAgo },
+      },
+      select: { eventId: true },
+    });
+
+    if (ticketsToCancel.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        // 2. Cancelar os tickets
+        await tx.ticket.updateMany({
+          where: {
+            status: 1,
+            createdAt: { lt: thirtyMinutesAgo },
+          },
+          data: { status: 4 },
+        });
+
+        // 3. Devolver as vagas para cada evento
+        // Criamos um mapa para contar quantos tickets de cada evento foram cancelados
+        for (const ticket of ticketsToCancel) {
+          await tx.event.update({
+            where: { id: ticket.eventId },
+            data: { capacity: { increment: 1 } },
+          });
+        }
+      });
+      console.log(`${ticketsToCancel.length} ingressos devolvidos ao estoque.`);
+    }
+  } catch (error) {
+    console.error("Erro no Cron de limpeza:", error);
+  }
+});
 
 app.post("/register", async (req, res) => {
   const { name, email, password } = req.body;
@@ -133,13 +173,11 @@ app.post("/login", async (req, res) => {
     res.status(500).json({ error: "Erro no servidor" });
   }
 });
-
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`🚀 Server rodando na porta ${PORT}`);
 });
-
 app.get("/events", async (req, res) => {
   const events = await prisma.event.findMany({
     include: { owner: { select: { name: true } } },
@@ -181,57 +219,86 @@ app.get("/events/:id", async (req, res) => {
 });
 
 app.post("/bookings", authMiddleware, async (req, res) => {
-  const { eventId, quantity, couponCode } = req.body;
+  const { eventId, quantity } = req.body;
+  const qty = Number(quantity);
 
   try {
-    const event = await prisma.event.findUnique({ where: { id: eventId } });
-    if (!event) {
-      return res.status(404).json({ error: "Evento não encontrado" });
-    }
-
-    if (couponCode) {
-      await prisma.coupon.update({
-        where: { code: couponCode },
-        data: { usedCount: { increment: 1 } },
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Buscamos o evento
+      const event = await tx.event.findUnique({
+        where: { id: eventId },
+        // Removido o include de batches por enquanto para não quebrar se não houver lotes
       });
-    }
 
-    const qty = Number(quantity);
-    if (event.capacity < qty) {
-      return res.status(400).json({
-        error: "Quantidade de ingressos excede a capacidade do evento",
+      if (!event) throw new Error("Evento não encontrado");
+
+      // 2. Verificação de capacidade simples (direto no evento)
+      if (event.capacity < qty) {
+        throw new Error("Capacidade insuficiente para este evento.");
+      }
+
+      // 3. Atualiza capacidade do EVENTO
+      await tx.event.update({
+        where: { id: eventId },
+        data: { capacity: { decrement: qty } },
       });
-    }
 
-    const tickets = [];
-    for (let i = 0; i < qty; i++) {
-      const ticket = await prisma.ticket.create({
-        data: {
-          eventId,
-          userId: req.user.id,
-          quantity: 1,
-        },
-      });
-      tickets.push(ticket);
-    }
+      // 4. Cria os tickets com status 1 (Gerado)
+      // Removi o batchId obrigatório por enquanto para você conseguir testar os status
+      const ticketData = Array.from({ length: qty }).map(() => ({
+        eventId,
+        userId: req.user.id,
+        status: 1, // Status inicial: Gerado
+        // batchId: activeBatch.id <-- COMENTADO até você configurar os lotes
+      }));
 
-    await prisma.event.update({
-      where: { id: eventId },
-      data: { capacity: event.capacity - qty },
+      return await tx.ticket.createMany({ data: ticketData });
     });
 
+    // Envio de e-mail (busca os dados para o template)
     const user = await prisma.user.findUnique({ where: { id: req.user.id } });
-    await sendBookingEmail(user.email, user.name, {
-      title: event.title,
-      location: event.location,
-      date: event.date.toISOString().split("T")[0],
-      quantity: qty,
-    });
+    const event = await prisma.event.findUnique({ where: { id: eventId } });
 
-    res.status(201).json({ tickets });
+    const confirmationUrl = `${baseUrl}/confirm-booking?userId=${req.user.id}&eventId=${eventId}`;
+
+    await sendBookingEmail(
+      user.email,
+      user.name,
+      {
+        title: event.title,
+        location: event.location,
+        date: event.date.toISOString().split("T")[0],
+        quantity: qty,
+      },
+      confirmationUrl,
+    );
+
+    res.status(201).json({ message: "Reserva gerada! Verifique seu e-mail." });
   } catch (error) {
-    console.error("DETALHE DO ERRO NO BACKEND:", error);
-    res.status(400).json({ error: "Erro ao gerar ingresso" });
+    console.error("Erro no Booking:", error.message);
+    res
+      .status(400)
+      .json({ error: error.message || "Erro ao processar reserva" });
+  }
+});
+
+app.get("/admin/tickets/pendentes", authMiddleware, async (req, res) => {
+  try {
+    const tickets = await prisma.ticket.findMany({
+      where: {
+        status: 2, // Apenas os que aguardam aprovação manual
+        event: {
+          ownerId: req.user.id, // Apenas tickets de eventos que EU criei
+        },
+      },
+      include: {
+        user: { select: { name: true, email: true } },
+        event: { select: { title: true } },
+      },
+    });
+    res.json(tickets);
+  } catch (error) {
+    res.status(500).json({ error: "Erro ao buscar tickets pendentes" });
   }
 });
 
@@ -454,5 +521,81 @@ app.put(
       console.error(error);
       res.status(500).json({ error: "Erro ao atualizar perfil." });
     }
+  },
+);
+
+app.get("/confirm-booking", async (req, res) => {
+  const { userId, eventId } = req.query;
+
+  try {
+    // Atualiza todos os tickets "Gerados" (1) desse usuário para esse evento para "Pendente" (2)
+    const updated = await prisma.ticket.updateMany({
+      where: {
+        userId: userId,
+        eventId: eventId,
+        status: 1,
+      },
+      data: { status: 2 },
+    });
+
+    if (updated.count === 0) {
+      return res.send("<h1>Reserva expirada ou já confirmada.</h1>");
+    }
+
+    // Redireciona de volta para o seu site no React para ele ver os ingressos
+    res.redirect("http://localhost:5173/my-tickets");
+  } catch (error) {
+    res.status(500).send("Erro ao confirmar reserva.");
+  }
+});
+
+// 2. Endpoint para o Organizador Aprovar ou Cancelar (Status 2 -> 3 ou 4)
+app.patch("/tickets/:id/status", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { newStatus } = req.body;
+
+  try {
+    const updatedTicket = await prisma.ticket.update({
+      where: { id },
+      data: { status: newStatus },
+    });
+
+    if (newStatus === 4) {
+      const ticket = await prisma.ticket.findUnique({ where: { id } });
+      await prisma.event.update({
+        where: { id: ticket.eventId },
+        data: { capacity: { increment: 1 } },
+      });
+    }
+
+    res.json({ message: "Status atualizado!", updatedTicket });
+  } catch (error) {
+    res.status(400).json({ error: "Erro ao atualizar status" });
+  }
+});
+
+app.post(
+  "/tickets/check-in",
+  authMiddleware,
+  isAdminMiddleware,
+  async (req, res) => {
+    const { ticketId } = req.body;
+
+    const ticket = await prisma.ticket.findUnique({ where: { id: ticketId } });
+
+    if (ticket.status !== 3) {
+      return res
+        .status(400)
+        .json({ error: "Este ticket não está aprovado ou já foi usado." });
+    }
+
+    await prisma.ticket.update({
+      where: { id: ticketId },
+      data: { status: 5 }, // Finalizado
+    });
+
+    res.json({
+      message: "Check-in realizado com sucesso! Bem-vindo ao evento.",
+    });
   },
 );

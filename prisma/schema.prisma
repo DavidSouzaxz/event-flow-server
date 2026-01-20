@@ -8,45 +8,63 @@ generator client {
 }
 
 model User {
-  id       String   @id @default(uuid())
-  email    String   @unique
-  name     String
-  password String
-  role     role     @default(USER) 
-  events   Event[]
-  verified  Boolean  @default(false)
+  id                String   @id @default(uuid())
+  email             String   @unique
+  name              String
+  password          String
+  role              role     @default(USER) 
+  events            Event[]  // Eventos que este usuário criou
+  verified          Boolean  @default(false)
   verificationToken String?
-  tickets  Ticket[] @relation("UserTickets") 
-  avatarUrl String?
+  tickets           Ticket[] @relation("UserTickets") // Ingressos que este usuário comprou
+  avatarUrl         String?
 }
 
 model Event {
-  id          String   @id @default(uuid())
-  title       String
-  description String
-  date        DateTime
-  location    String
-  price       Float
-  capacity    Int      @default(50) 
-  imageUrl    String
-  ownerId     String
-  owner       User     @relation(fields: [ownerId], references: [id])
-  tickets     Ticket[]
+  id                String   @id @default(uuid())
+  title             String
+  description       String
+  date              DateTime
+  location          String
+  price             Float
+  capacity          Int      @default(50) 
+  imageUrl          String
+  ownerId           String
+  owner             User     @relation(fields: [ownerId], references: [id])
+  tickets           Ticket[]
+  batches           Batch[]  // Adicionado para suportar os lotes
+  maxTicketsPerUser Int      @default(0) // Adicionado para controle de vendas por usuário
 }
 
 model Ticket {
-  id        String   @id @default(uuid())
-  eventId   String
-  userId    String
-  quantity  Int      @default(1) 
-  event     Event    @relation(fields: [eventId], references: [id])
-  user      User     @relation(fields: [userId], references: [id], name: "UserTickets")
-  createdAt DateTime @default(now())
+  id          String   @id @default(uuid())
+  eventId     String
+  userId      String
+  batchId     String?   
+  quantity    Int      @default(1) 
+  
+  event       Event    @relation(fields: [eventId], references: [id])
+  user        User     @relation(fields: [userId], references: [id], name: "UserTickets")
+  batch       Batch?    @relation(fields: [batchId], references: [id])
+  
+  // Status: 1-Gerado, 2-Pendente, 3-Aprovado, 4-Cancelado, 5-Finalizado
+  status      Int      @default(1)
+  createdAt   DateTime @default(now())
+}
+
+model Batch {
+  id          String   @id @default(uuid())
+  name        String   // Ex: "1º Lote"
+  price       Float
+  limit       Int      // Capacidade deste lote
+  eventId     String
+  event       Event    @relation(fields: [eventId], references: [id])
+  tickets     Ticket[]
 }
 
 model Coupon {
   id              String   @id @default(uuid())
-  code            String   @unique // Ex: "PROMO10"
+  code            String   @unique
   discountPercent Int      
   maxUses         Int      @default(100)
   usedCount       Int      @default(0)
