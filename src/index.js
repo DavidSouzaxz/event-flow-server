@@ -1,16 +1,21 @@
 try {
   require("dotenv").config();
-} catch (e) {
- 
-}
+} catch (e) {}
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const authMiddleware = require("./middlewares/auth");
 const isAdminMiddleware = require("./middlewares/isAdmin");
 const { upload } = require("./config/cloudinary");
+const {
+  sendBookingEmail,
+  sendVerificationEmail,
+} = require("./services/mailService");
+
+const baseUrl = process.env.BASE_URL || "http://localhost:3000";
 
 const prisma = new PrismaClient();
 
@@ -20,6 +25,7 @@ app.use(express.json());
 
 app.post("/register", async (req, res) => {
   const { name, email, password } = req.body;
+  const verificationToken = crypto.randomBytes(32).toString("hex");
 
   try {
     const userExists = await prisma.user.findUnique({ where: { email } });
@@ -32,7 +38,7 @@ app.post("/register", async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
-      data: { name, email, password: hashedPassword },
+      data: { name, email, password: hashedPassword, verificationToken },
     });
 
     res.status(201).json({
@@ -46,12 +52,62 @@ app.post("/register", async (req, res) => {
   }
 });
 
+app.get("/verify-email", async (req, res) => {
+  const { token } = req.query;
+
+  const user = await prisma.user.findFirst({
+    where: { verificationToken: token },
+  });
+
+  if (!user) {
+    return res.status(400).json({ error: "Token inválido ou já utilizado" });
+  }
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      verified: true,
+      verificationToken: null,
+    },
+  });
+
+  res.json({
+    message: "E-mail verificado com sucesso! Agora você pode logar.",
+  });
+});
+
+app.post("/send-verify-email", async (req, res) => {
+  const { email } = req.body;
+  try {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
+
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { verificationToken },
+    });
+
+    const verificationUrl = `${baseUrl}/verify-email?token=${verificationToken}`;
+    await sendVerificationEmail(user.email, user.name, verificationUrl);
+
+    res.json({ message: "E-mail de verificação enviado!" });
+  } catch (error) {
+    console.log("Erro ao enviar e-mail de verificação:", error);
+    res.status(500).json({ error: "Erro ao enviar e-mail de verificação" });
+  }
+});
+
 app.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(401).json({ error: "Credenciais inválidas" });
+
+    if (!user.verified) {
+      return res.status(403).json({ error: "E-mail não verificado" });
+    }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid)
@@ -63,13 +119,12 @@ app.post("/login", async (req, res) => {
       { expiresIn: "1d" },
     );
 
-    
     res.json({
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role, 
+        role: user.role,
         avatarUrl: user.avatarUrl,
       },
       token,
@@ -129,7 +184,6 @@ app.post("/bookings", authMiddleware, async (req, res) => {
   const { eventId, quantity, couponCode } = req.body;
 
   try {
-    
     const event = await prisma.event.findUnique({ where: { id: eventId } });
     if (!event) {
       return res.status(404).json({ error: "Evento não encontrado" });
@@ -149,7 +203,6 @@ app.post("/bookings", authMiddleware, async (req, res) => {
       });
     }
 
-   
     const tickets = [];
     for (let i = 0; i < qty; i++) {
       const ticket = await prisma.ticket.create({
@@ -162,14 +215,22 @@ app.post("/bookings", authMiddleware, async (req, res) => {
       tickets.push(ticket);
     }
 
-    
     await prisma.event.update({
       where: { id: eventId },
       data: { capacity: event.capacity - qty },
     });
 
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    await sendBookingEmail(user.email, user.name, {
+      title: event.title,
+      location: event.location,
+      date: event.date.toISOString().split("T")[0],
+      quantity: qty,
+    });
+
     res.status(201).json({ tickets });
   } catch (error) {
+    console.error("DETALHE DO ERRO NO BACKEND:", error);
     res.status(400).json({ error: "Erro ao gerar ingresso" });
   }
 });
@@ -370,7 +431,6 @@ app.put(
     const { name } = req.body;
 
     try {
-     
       const updateData = { name };
 
       if (req.file) {

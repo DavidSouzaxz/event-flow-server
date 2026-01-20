@@ -30,7 +30,7 @@ module.exports = async (req, res, next) => {
         return res.status(401).json({ error: "Usuário não encontrado" });
       }
 
-      req.user = user; // Adiciona o objeto completo do usuário ao req
+      req.user = user;
       return next();
     } catch (error) {
       return res.status(500).json({ error: "Erro ao buscar usuário" });
