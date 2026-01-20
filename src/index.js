@@ -16,12 +16,18 @@ const {
 } = require("./services/mailService");
 const cron = require("node-cron");
 
-const baseUrl = process.env.BASE_URL || "http://localhost:3000";
+const baseUrl = process.env.BASE_URL || "http://localhost:5173";
 const prisma = new PrismaClient();
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server rodando na porta ${PORT}`);
+});
 
 cron.schedule("*/5 * * * *", async () => {
   const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
@@ -94,6 +100,7 @@ app.post("/register", async (req, res) => {
 
 app.get("/verify-email", async (req, res) => {
   const { token } = req.query;
+  const urlLogin = `${baseUrl}/login`;
 
   const user = await prisma.user.findFirst({
     where: { verificationToken: token },
@@ -111,9 +118,7 @@ app.get("/verify-email", async (req, res) => {
     },
   });
 
-  res.json({
-    message: "E-mail verificado com sucesso! Agora você pode logar.",
-  });
+  res.redirect(urlLogin);
 });
 
 app.post("/send-verify-email", async (req, res) => {
@@ -128,7 +133,8 @@ app.post("/send-verify-email", async (req, res) => {
       data: { verificationToken },
     });
 
-    const verificationUrl = `${baseUrl}/verify-email?token=${verificationToken}`;
+    const serverUrl = process.env.SERVER_URL || `http://localhost:${PORT}`;
+    const verificationUrl = `${serverUrl}/verify-email?token=${verificationToken}`;
     await sendVerificationEmail(user.email, user.name, verificationUrl);
 
     res.json({ message: "E-mail de verificação enviado!" });
@@ -173,11 +179,7 @@ app.post("/login", async (req, res) => {
     res.status(500).json({ error: "Erro no servidor" });
   }
 });
-const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server rodando na porta ${PORT}`);
-});
 app.get("/events", async (req, res) => {
   const events = await prisma.event.findMany({
     include: { owner: { select: { name: true } } },
