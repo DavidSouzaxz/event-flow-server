@@ -12,9 +12,10 @@ model User {
   email    String   @unique
   name     String
   password String
-  role     role     @default(USER) // Adicionado o campo role com valor padrão USER
+  role     role     @default(USER) 
   events   Event[]
-  tickets  Ticket[] @relation("UserTickets") // Adicionado o campo para a relação inversa com Ticket
+  tickets  Ticket[] @relation("UserTickets") 
+  avatarUrl String?
 }
 
 model Event {
@@ -44,7 +45,7 @@ model Ticket {
 model Coupon {
   id              String   @id @default(uuid())
   code            String   @unique // Ex: "PROMO10"
-  discountPercent Int      // Porcentagem de desconto (ex: 10)
+  discountPercent Int      
   maxUses         Int      @default(100)
   usedCount       Int      @default(0)
   expirationDate  DateTime
