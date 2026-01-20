@@ -1,7 +1,7 @@
 try {
   require("dotenv").config();
 } catch (e) {
-  // Ignora se o dotenv não estiver disponível em produção
+ 
 }
 const express = require("express");
 const { PrismaClient } = require("@prisma/client");
@@ -10,6 +10,7 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const authMiddleware = require("./middlewares/auth");
 const isAdminMiddleware = require("./middlewares/isAdmin");
+const { upload } = require("./config/cloudinary");
 
 const prisma = new PrismaClient();
 
@@ -62,8 +63,15 @@ app.post("/login", async (req, res) => {
       { expiresIn: "1d" },
     );
 
+    
     res.json({
-      user: { id: user.id, name: user.name, email: user.email },
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role, 
+        avatarUrl: user.avatarUrl,
+      },
       token,
     });
   } catch (error) {
@@ -103,7 +111,7 @@ app.post("/events", authMiddleware, isAdminMiddleware, async (req, res) => {
     });
     res.status(201).json(event);
   } catch (error) {
-    console.error("Erro ao criar evento:", error); // Log do erro
+    console.error("Erro ao criar evento:", error);
     res.status(400).json({ error: "Erro ao criar evento" });
   }
 });
@@ -121,7 +129,7 @@ app.post("/bookings", authMiddleware, async (req, res) => {
   const { eventId, quantity, couponCode } = req.body;
 
   try {
-    // Busca o evento para verificar a capacidade
+    
     const event = await prisma.event.findUnique({ where: { id: eventId } });
     if (!event) {
       return res.status(404).json({ error: "Evento não encontrado" });
@@ -141,7 +149,7 @@ app.post("/bookings", authMiddleware, async (req, res) => {
       });
     }
 
-    // Cria um ticket para cada ingresso reservado
+   
     const tickets = [];
     for (let i = 0; i < qty; i++) {
       const ticket = await prisma.ticket.create({
@@ -154,7 +162,7 @@ app.post("/bookings", authMiddleware, async (req, res) => {
       tickets.push(ticket);
     }
 
-    // Atualiza a capacidade do evento
+    
     await prisma.event.update({
       where: { id: eventId },
       data: { capacity: event.capacity - qty },
@@ -337,7 +345,13 @@ app.get("/me", authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { id: true, name: true, email: true, role: true }, // Não envie a senha!
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        avatarUrl: true,
+      },
     });
 
     if (!user) return res.status(401).json({ error: "Usuário não existe" });
@@ -348,18 +362,37 @@ app.get("/me", authMiddleware, async (req, res) => {
   }
 });
 
-app.put("/profile", authMiddleware, async (req, res) => {
-  const { name } = req.body;
+app.put(
+  "/profile",
+  authMiddleware,
+  upload.single("avatar"),
+  async (req, res) => {
+    const { name } = req.body;
 
-  try {
-    const updatedUser = await prisma.user.update({
-      where: { id: req.user.id },
-      data: { name },
-      select: { id: true, name: true, email: true, role: true },
-    });
+    try {
+     
+      const updateData = { name };
 
-    res.json(updatedUser);
-  } catch (error) {
-    res.status(500).json({ error: "Erro ao atualizar perfil." });
-  }
-});
+      if (req.file) {
+        updateData.avatarUrl = req.file.path;
+      }
+
+      const updatedUser = await prisma.user.update({
+        where: { id: req.user.id },
+        data: updateData,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          avatarUrl: true,
+        },
+      });
+
+      res.json(updatedUser);
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Erro ao atualizar perfil." });
+    }
+  },
+);
