@@ -14,6 +14,7 @@ const {
   sendBookingEmail,
   sendVerificationEmail,
 } = require("./services/mailService");
+const { deleteFromCloudinary } = require("./services/cloudinary");
 const cron = require("node-cron");
 
 const baseUrl = process.env.BASE_URL || "http://localhost:5173";
@@ -33,7 +34,6 @@ cron.schedule("*/5 * * * *", async () => {
   const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
 
   try {
-    // 1. Buscar quais tickets serão cancelados para saber de quais eventos eles são
     const ticketsToCancel = await prisma.ticket.findMany({
       where: {
         status: 1,
@@ -44,7 +44,6 @@ cron.schedule("*/5 * * * *", async () => {
 
     if (ticketsToCancel.length > 0) {
       await prisma.$transaction(async (tx) => {
-        // 2. Cancelar os tickets
         await tx.ticket.updateMany({
           where: {
             status: 1,
@@ -53,8 +52,6 @@ cron.schedule("*/5 * * * *", async () => {
           data: { status: 4 },
         });
 
-        // 3. Devolver as vagas para cada evento
-        // Criamos um mapa para contar quantos tickets de cada evento foram cancelados
         for (const ticket of ticketsToCancel) {
           await tx.event.update({
             where: { id: ticket.eventId },
@@ -62,10 +59,9 @@ cron.schedule("*/5 * * * *", async () => {
           });
         }
       });
-      console.log(`${ticketsToCancel.length} ingressos devolvidos ao estoque.`);
     }
   } catch (error) {
-    console.error("Erro no Cron de limpeza:", error);
+    return ("Erro no Cron de limpeza:", error);
   }
 });
 
@@ -139,7 +135,6 @@ app.post("/send-verify-email", async (req, res) => {
 
     res.json({ message: "E-mail de verificação enviado!" });
   } catch (error) {
-    console.log("Erro ao enviar e-mail de verificação:", error);
     res.status(500).json({ error: "Erro ao enviar e-mail de verificação" });
   }
 });
@@ -187,29 +182,48 @@ app.get("/events", async (req, res) => {
   res.json(events);
 });
 
-app.post("/events", authMiddleware, isAdminMiddleware, async (req, res) => {
-  const { title, description, date, location, price, imageUrl, capacity } =
-    req.body;
+app.post(
+  "/events",
+  authMiddleware,
+  isAdminMiddleware,
+  upload.single("image"),
+  async (req, res) => {
+    const {
+      title,
+      description,
+      date,
+      location,
+      price,
+      capacity,
+      ticketLimitPerPerson,
+    } = req.body;
 
-  try {
-    const event = await prisma.event.create({
-      data: {
-        title,
-        description,
-        date: new Date(date),
-        capacity: Number(capacity),
-        location,
-        price: parseFloat(price),
-        imageUrl,
-        ownerId: req.user.id,
-      },
-    });
-    res.status(201).json(event);
-  } catch (error) {
-    console.error("Erro ao criar evento:", error);
-    res.status(400).json({ error: "Erro ao criar evento" });
-  }
-});
+    try {
+      let imageUrl = req.body.imageUrl;
+
+      if (req.file) {
+        imageUrl = req.file.path;
+      }
+
+      const event = await prisma.event.create({
+        data: {
+          title,
+          description,
+          date: new Date(date),
+          capacity: Number(capacity),
+          location,
+          price: parseFloat(price),
+          imageUrl,
+          ownerId: req.user.id,
+          ticketLimitPerPerson: Number(ticketLimitPerPerson),
+        },
+      });
+      res.status(201).json(event);
+    } catch (error) {
+      res.status(400).json({ error: "Erro ao criar evento" });
+    }
+  },
+);
 
 app.get("/events/:id", async (req, res) => {
   const { id } = req.params;
@@ -223,45 +237,53 @@ app.get("/events/:id", async (req, res) => {
 app.post("/bookings", authMiddleware, async (req, res) => {
   const { eventId, quantity } = req.body;
   const qty = Number(quantity);
+  const userId = req.user.id;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Buscamos o evento
       const event = await tx.event.findUnique({
         where: { id: eventId },
-        // Removido o include de batches por enquanto para não quebrar se não houver lotes
       });
 
       if (!event) throw new Error("Evento não encontrado");
 
-      // 2. Verificação de capacidade simples (direto no evento)
+      const userTicketCount = await prisma.ticket.count({
+        where: {
+          eventId: eventId,
+          userId: userId,
+          status: { not: 4 },
+        },
+      });
+
+      if (userTicketCount + qty > event.ticketLimitPerPerson) {
+        return res.status(400).json({
+          error: `Você já possui ${userTicketCount} ingresso(s). O limite para este evento é de ${event.ticketLimitPerPerson} por pessoa.`,
+        });
+      }
+
       if (event.capacity < qty) {
         throw new Error("Capacidade insuficiente para este evento.");
       }
 
-      // 3. Atualiza capacidade do EVENTO
       await tx.event.update({
         where: { id: eventId },
         data: { capacity: { decrement: qty } },
       });
 
-      // 4. Cria os tickets com status 1 (Gerado)
-      // Removi o batchId obrigatório por enquanto para você conseguir testar os status
       const ticketData = Array.from({ length: qty }).map(() => ({
         eventId,
         userId: req.user.id,
-        status: 1, // Status inicial: Gerado
-        // batchId: activeBatch.id <-- COMENTADO até você configurar os lotes
+        status: 1,
       }));
 
       return await tx.ticket.createMany({ data: ticketData });
     });
 
-    // Envio de e-mail (busca os dados para o template)
     const user = await prisma.user.findUnique({ where: { id: req.user.id } });
     const event = await prisma.event.findUnique({ where: { id: eventId } });
 
-    const confirmationUrl = `${baseUrl}/confirm-booking?userId=${req.user.id}&eventId=${eventId}`;
+    const serverUrl = process.env.SERVER_URL || `http://localhost:${PORT}`;
+    const confirmationUrl = `${serverUrl}/confirm-booking?userId=${req.user.id}&eventId=${eventId}`;
 
     await sendBookingEmail(
       user.email,
@@ -277,7 +299,6 @@ app.post("/bookings", authMiddleware, async (req, res) => {
 
     res.status(201).json({ message: "Reserva gerada! Verifique seu e-mail." });
   } catch (error) {
-    console.error("Erro no Booking:", error.message);
     res
       .status(400)
       .json({ error: error.message || "Erro ao processar reserva" });
@@ -288,9 +309,9 @@ app.get("/admin/tickets/pendentes", authMiddleware, async (req, res) => {
   try {
     const tickets = await prisma.ticket.findMany({
       where: {
-        status: 2, // Apenas os que aguardam aprovação manual
+        status: 3,
         event: {
-          ownerId: req.user.id, // Apenas tickets de eventos que EU criei
+          ownerId: req.user.id,
         },
       },
       include: {
@@ -339,17 +360,29 @@ app.get("/my-events", authMiddleware, async (req, res) => {
   }
 });
 
-app.delete("/events/:id", authMiddleware, async (req, res) => {
-  const { id } = req.params;
-  try {
-    await prisma.ticket.deleteMany({ where: { eventId: id } });
-    await prisma.event.delete({ where: { id, ownerId: req.user.id } });
+app.delete(
+  "/events/:id",
+  authMiddleware,
+  upload.single("avatar"),
+  async (req, res) => {
+    const { id } = req.params;
+    try {
+      const event = await prisma.event.findUnique({
+        where: { id, ownerId: req.user.id },
+      });
 
-    res.json({ message: "Evento excluído com sucesso" });
-  } catch (error) {
-    res.status(400).json({ error: "Não foi possível excluir o evento" });
-  }
-});
+      if (event.imageUrl) {
+        await deleteFromCloudinary(event.imageUrl);
+      }
+      await prisma.ticket.deleteMany({ where: { eventId: id } });
+      await prisma.event.delete({ where: { id, ownerId: req.user.id } });
+
+      res.json({ message: "Evento excluído com sucesso" });
+    } catch (error) {
+      res.status(400).json({ error: "Não foi possível excluir o evento" });
+    }
+  },
+);
 
 app.put("/events/:id", authMiddleware, isAdminMiddleware, async (req, res) => {
   const { id } = req.params;
@@ -499,6 +532,10 @@ app.put(
   async (req, res) => {
     const { name } = req.body;
 
+    if (req.file && req.user.avatarUrl) {
+      await deleteFromCloudinary(req.user.avatarUrl);
+    }
+
     try {
       const updateData = { name };
 
@@ -520,7 +557,6 @@ app.put(
 
       res.json(updatedUser);
     } catch (error) {
-      console.error(error);
       res.status(500).json({ error: "Erro ao atualizar perfil." });
     }
   },
@@ -530,28 +566,25 @@ app.get("/confirm-booking", async (req, res) => {
   const { userId, eventId } = req.query;
 
   try {
-    // Atualiza todos os tickets "Gerados" (1) desse usuário para esse evento para "Pendente" (2)
     const updated = await prisma.ticket.updateMany({
       where: {
         userId: userId,
         eventId: eventId,
         status: 1,
       },
-      data: { status: 2 },
+      data: { status: 3 },
     });
 
     if (updated.count === 0) {
       return res.send("<h1>Reserva expirada ou já confirmada.</h1>");
     }
 
-    // Redireciona de volta para o seu site no React para ele ver os ingressos
-    res.redirect("http://localhost:5173/my-tickets");
+    res.redirect(`${baseUrl}/my-tickets`);
   } catch (error) {
     res.status(500).send("Erro ao confirmar reserva.");
   }
 });
 
-// 2. Endpoint para o Organizador Aprovar ou Cancelar (Status 2 -> 3 ou 4)
 app.patch("/tickets/:id/status", authMiddleware, async (req, res) => {
   const { id } = req.params;
   const { newStatus } = req.body;
@@ -583,7 +616,15 @@ app.post(
   async (req, res) => {
     const { ticketId } = req.body;
 
+    if (!ticketId) {
+      return res.status(400).json({ error: "ID do ticket é obrigatório" });
+    }
+
     const ticket = await prisma.ticket.findUnique({ where: { id: ticketId } });
+
+    if (!ticket) {
+      return res.status(404).json({ error: "Ticket não encontrado" });
+    }
 
     if (ticket.status !== 3) {
       return res
@@ -593,7 +634,7 @@ app.post(
 
     await prisma.ticket.update({
       where: { id: ticketId },
-      data: { status: 5 }, // Finalizado
+      data: { status: 5 },
     });
 
     res.json({
