@@ -32,8 +32,8 @@ model Event {
   ownerId           String
   owner             User     @relation(fields: [ownerId], references: [id])
   tickets           Ticket[]
-  batches           Batch[]  // Adicionado para suportar os lotes
-  maxTicketsPerUser Int      @default(0) // Adicionado para controle de vendas por usuário
+  batches           Batch[]  
+  ticketLimitPerPerson Int   @default(1) 
 }
 
 model Ticket {
@@ -47,7 +47,6 @@ model Ticket {
   user        User     @relation(fields: [userId], references: [id], name: "UserTickets")
   batch       Batch?    @relation(fields: [batchId], references: [id])
   
-  // Status: 1-Gerado, 2-Pendente, 3-Aprovado, 4-Cancelado, 5-Finalizado
   status      Int      @default(1)
   createdAt   DateTime @default(now())
 }
