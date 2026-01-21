@@ -234,6 +234,41 @@ app.get("/events/:id", async (req, res) => {
   res.json(event);
 });
 
+app.get("/events/:id/availability", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  try {
+    const event = await prisma.event.findUnique({
+      where: { id },
+    });
+
+    if (!event) {
+      return res.status(404).json({ error: "Evento não encontrado" });
+    }
+
+    const userTicketCount = await prisma.ticket.count({
+      where: {
+        eventId: id,
+        userId: userId,
+        status: { not: 4 }, // Ignora ingressos cancelados/reembolsados
+      },
+    });
+
+    const hasReachedLimit = userTicketCount >= event.ticketLimitPerPerson;
+
+    res.json({
+      hasReachedLimit,
+      userTicketCount,
+      ticketLimitPerPerson: event.ticketLimitPerPerson,
+      canBuy: !hasReachedLimit && event.capacity > 0,
+    });
+  } catch (error) {
+    console.error("Erro ao verificar disponibilidade:", error);
+    res.status(500).json({ error: "Erro ao verificar disponibilidade" });
+  }
+});
+
 app.post("/bookings", authMiddleware, async (req, res) => {
   const { eventId, quantity } = req.body;
   const qty = Number(quantity);
