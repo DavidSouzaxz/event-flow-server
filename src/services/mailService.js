@@ -10,7 +10,12 @@ const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
 /**
  * Envia e-mail de confirmação de reserva
  */
-async function sendBookingEmail(userEmail, userName, eventDetails) {
+async function sendBookingEmail(
+  userEmail,
+  userName,
+  eventDetails,
+  confirmationUrl,
+) {
   const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
 
   sendSmtpEmail.subject = `Confirmado: ${eventDetails.title}`;
@@ -28,9 +33,9 @@ async function sendBookingEmail(userEmail, userName, eventDetails) {
                     <p><strong>Ingressos:</strong> ${eventDetails.quantity}</p>
                 </div>
                 <br>
-                <a href="https://event-flow-client-azure.vercel.app/my-tickets" 
+                <a href="${confirmationUrl}"
                    style="background-color: #4f46e5; color: white; padding: 15px 25px; text-decoration: none; border-radius: 10px; display: inline-block;">
-                   Ver meus Ingressos
+                   Confirmar Reserva
                 </a>
             </div>
         </div>`;
