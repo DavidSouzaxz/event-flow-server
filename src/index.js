@@ -282,7 +282,14 @@ app.get("/events/:id/availability", authMiddleware, async (req, res) => {
 });
 
 app.post("/bookings", authMiddleware, async (req, res) => {
-  const { eventId, quantity } = req.body;
+  const { eventId, quantity, batchId } = req.body;
+
+  if (!batchId) {
+    return res
+      .status(400)
+      .json({ error: "ID do lote é obrigatório para a compra." });
+  }
+
   const qty = Number(quantity);
   const userId = req.user.id;
 
@@ -320,6 +327,7 @@ app.post("/bookings", authMiddleware, async (req, res) => {
       const ticketData = Array.from({ length: qty }).map(() => ({
         eventId,
         userId: req.user.id,
+        batchId,
         status: 1,
       }));
 
@@ -347,8 +355,10 @@ app.post("/bookings", authMiddleware, async (req, res) => {
     res.status(201).json({ message: "Reserva gerada! Verifique seu e-mail." });
   } catch (error) {
     res
+
       .status(400)
       .json({ error: error.message || "Erro ao processar reserva" });
+    console.log("Erro ao processar reserva:", error);
   }
 });
 
