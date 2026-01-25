@@ -194,11 +194,15 @@ app.post(
       date,
       location,
       price,
+      batches,
       capacity,
       ticketLimitPerPerson,
     } = req.body;
 
     try {
+      const parsedBatches =
+        typeof batches === "string" ? JSON.parse(batches) : batches;
+
       let imageUrl = req.body.imageUrl;
 
       if (req.file) {
@@ -216,7 +220,15 @@ app.post(
           imageUrl,
           ownerId: req.user.id,
           ticketLimitPerPerson: Number(ticketLimitPerPerson),
+          batches: {
+            create: parsedBatches.map((b) => ({
+              name: b.name,
+              price: parseFloat(b.price),
+              limit: parseInt(b.limit),
+            })),
+          },
         },
+        include: { batches: true },
       });
       res.status(201).json(event);
     } catch (error) {
@@ -229,7 +241,7 @@ app.get("/events/:id", async (req, res) => {
   const { id } = req.params;
   const event = await prisma.event.findUnique({
     where: { id },
-    include: { owner: { select: { name: true } } },
+    include: { owner: { select: { name: true } }, batches: true },
   });
   res.json(event);
 });
@@ -409,8 +421,16 @@ app.delete(
       if (event.imageUrl) {
         await deleteFromCloudinary(event.imageUrl);
       }
-      await prisma.ticket.deleteMany({ where: { eventId: id } });
-      await prisma.event.delete({ where: { id, ownerId: req.user.id } });
+      await prisma.$transaction([
+        // Primeiro os tickets (que dependem de evento e lote)
+        prisma.ticket.deleteMany({ where: { eventId: id } }),
+
+        // Segundo os lotes (que dependem do evento)
+        prisma.batch.deleteMany({ where: { eventId: id } }),
+
+        // Por último o evento
+        prisma.event.delete({ where: { id } }),
+      ]);
 
       res.json({ message: "Evento excluído com sucesso" });
     } catch (error) {
